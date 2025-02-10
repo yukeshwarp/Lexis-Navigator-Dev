@@ -11,8 +11,8 @@ def load_json_document(file_path):
     return document
 
 client = AzureOpenAI(
-    azure_endpoint= "https://llmtech-eus2.openai.azure.com",
-    api_key="fd87c22896654bc09830988577f2d7b5",
+    azure_endpoint=os.getenv("ENDPOINT"),
+    api_key=os.getenv("OPENAI_API_KEY"),
     api_version="2024-10-01-preview",
 )
 
