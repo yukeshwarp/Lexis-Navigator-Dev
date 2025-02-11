@@ -3,6 +3,7 @@ from openai import AzureOpenAI
 import json
 import requests
 import os
+import hashlib
 
 # Load the JSON document content
 def load_json_document(file_path):
@@ -20,7 +21,6 @@ client = AzureOpenAI(
 # Bing Search API configuration
 BING_SEARCH_ENDPOINT = "https://api.bing.microsoft.com/v7.0/search"
 BING_API_KEY = "afc632c209584311956e12239969f498"
-
 
 def search_bing(query):
     try:
@@ -51,6 +51,7 @@ def search_bing(query):
             return f"Error during search: {response.status_code}"
     except Exception as e:
         print(e)
+        return f"Error: {str(e)}"
 
 # Set up the Streamlit app
 st.title("Lexis Navigator")
@@ -70,13 +71,6 @@ for message in st.session_state.messages:
     else:
         st.chat_message("assistant").markdown(message["content"])  # Use .text() here instead of .content()
 
-    # Add "Search" button for each assistant's response
-    if message["role"] == "assistant":
-        if st.button("Search more on the web", key=message["content"]):  # Use message content as unique key
-            search_result = search_bing(message["content"])
-            st.session_state.messages.append({"role": "assistant", "content": search_result})
-            st.rerun()
-
 # Implement streaming input
 if prompt := st.chat_input("Ask your question here..."):
     # Display the user's question in the chat
@@ -84,37 +78,52 @@ if prompt := st.chat_input("Ask your question here..."):
 
     with st.spinner("Thinking..."):
         inline_prompt = f"Given the following context, answer the question:\n\nContext: {context}\n\nQuestion: {prompt}\nAnswer:"
-        
-        response_stream = client.chat.completions.create(
-                    model="gpt-4o",  # Replace with your model ID
-                    messages=[{
-                        "role": "system",
-                        "content": "You are a helpful assistant, who answers users' questions in a friendly manner.",
-                    },
-                    {"role": "user", "content": inline_prompt}],
-                    temperature=0.0,
-                    stream=True,
-                )
-        
-    bot_response = ""
-    with st.chat_message("assistant"):
-        response_placeholder = st.empty()
-        for chunk in response_stream:
-            if chunk.choices:
-                bot_response += chunk.choices[0].delta.content or ""
-                response_placeholder.markdown(bot_response)
 
-    st.session_state.messages.append({"role": "assistant", "content": bot_response})
+        try:
+            response_stream = client.chat.completions.create(
+                        model="gpt-4o",  # Replace with your model ID
+                        messages=[{
+                            "role": "system",
+                            "content": "You are a helpful assistant, who answers users' questions in a friendly manner.",
+                        },
+                        {"role": "user", "content": inline_prompt}],
+                        temperature=0.0,
+                        stream=True,
+                    )
+            
+            bot_response = ""
+            with st.chat_message("assistant"):
+                response_placeholder = st.empty()
+                for chunk in response_stream:
+                    if chunk.choices:
+                        bot_response += chunk.choices[0].delta.content or ""
+                        response_placeholder.markdown(bot_response)
 
+            st.session_state.messages.append({"role": "assistant", "content": bot_response})
+
+            # Perform Bing Search and ground the response with search results
+            search_result = search_bing(prompt)
+
+            # Modify the assistant's response to include search results
+            grounded_response = f"{bot_response}\n\nAdditionally, I found the following relevant information from the web:\n{search_result}"
+
+            st.session_state.messages.append({"role": "assistant", "content": grounded_response})
+
+        except Exception as e:
+            st.session_state.messages.append({"role": "assistant", "content": f"Error: {str(e)}"})
+
+    # Display messages with an additional search button for the last entered user prompt
     for message in st.session_state.messages:
         if message["role"] == "user":
             st.chat_message("user").markdown(message["content"])  # Use .text() here instead of .content()
         else:
             st.chat_message("assistant").markdown(message["content"])  # Use .text() here instead of .content()
 
-        # Add "Search" button for each assistant's response
         if message["role"] == "assistant":
-            if st.button("Search more on the web", key=message["content"]):  # Use message content as unique key
-                search_result = search_bing(message["content"])
-                st.session_state.messages.append({"role": "assistant", "content": search_result})
-                st.rerun()
+            # Use the most recent user input as the key for the "Search more on the web" button
+            if prompt:  # Ensure prompt is not empty
+                search_button_key = hashlib.md5(prompt.encode()).hexdigest()
+                if st.button("Search more on the web", key=search_button_key):  # Use the last user input as the key
+                    search_result = search_bing(prompt)
+                    st.session_state.messages.append({"role": "assistant", "content": search_result})
+                    st.rerun()
